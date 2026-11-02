@@ -206,6 +206,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 0; width: 100%; }
     <div class="group">
       <button class="btn" id="btn-file">保存・読込</button>
       <button class="btn" id="btn-png">画像にする</button>
+      <button class="btn" id="btn-reset" title="最初の食堂の配置に戻す">リセット</button>
     </div>
   </header>
 
@@ -336,6 +337,18 @@ function rotPt([x, y], [cx, cy], deg) {
 const norm = d => ((Math.round(d) % 360) + 360) % 360;
 function toWorld(e) { const r = svg.getBoundingClientRect(); return [(e.clientX - r.left - view.tx) / view.s, (e.clientY - r.top - view.ty) / view.s]; }
 const byId = id => doc.objs.find(o => o.id === id);
+// グループに入っているものは、仲間もまとめて選ぶ
+function withGroups(ids) {
+  const gs = new Set([...ids].map(byId).filter(o => o && o.group).map(o => o.group));
+  const out = new Set(ids);
+  if (gs.size) doc.objs.forEach(o => { if (gs.has(o.group)) out.add(o.id); });
+  return out;
+}
+function selGroup() {
+  const list = [...sel].map(byId).filter(Boolean);
+  if (list.length < 2 || !list[0].group || !list.every(o => o.group === list[0].group)) return null;
+  return doc.objs.filter(o => o.group === list[0].group).length === list.length ? list[0].group : null;
+}
 const tagOf = name => doc.tags.find(t => t.name === name);
 
 /* ---------- 履歴と保存 ---------- */
@@ -426,6 +439,15 @@ function render() {
   out += `<rect x="${x0}" y="${y0}" width="${w}" height="${h}" fill="url(#g100)"/>`;
   out += contentSVG(CV, true);
   const hs = 6 / s;
+  // グループの外枠（選んでいるグループごとに点線）
+  if (!roomEdit) {
+    const gs = new Set([...sel].map(byId).filter(o => o && o.group).map(o => o.group));
+    gs.forEach(g => {
+      const pts = []; doc.objs.forEach(o => { if (o.group === g) pts.push(...(o.kind === 'item' ? itemCorners(o) : o.pts)); });
+      const bb = bbox(pts), p = 10 / s;
+      out += `<rect x="${bb.x - p}" y="${bb.y - p}" width="${bb.w + p * 2}" height="${bb.h + p * 2}" rx="${4 / s}" fill="none" stroke="var(--sel)" stroke-width="1.5" stroke-dasharray="6 4" vector-effect="non-scaling-stroke"/>`;
+    });
+  }
   // 選んだエリアの頂点
   if (!roomEdit && sel.size === 1) {
     const a = byId([...sel][0]);
@@ -525,7 +547,7 @@ function renderPanel() {
       <p class="note">上の列から左→右の順に自動でふります。机を動かすと番号も付け直されます。</p>
       <hr><h2>使い方</h2>
       <p class="note">家具はクリックかドラッグで置き、選ぶと右の欄で番号・大きさ・角度を変えられます。<br>赤い丸をドラッグすると回転します。<br>エリアは「四角エリア」「多角形エリア」で描き、タグ（通路・階段など）を付けます。</p>
-      <dl class="stats"><dt>削除</dt><dd>Delete</dd><dt>複製</dt><dd>⌘D</dd><dt>コピー / 貼り付け</dt><dd>⌘C / ⌘V</dd><dt>15° 回転</dt><dd>Q / E</dd><dt>少し動かす</dt><dd>矢印キー</dd><dt>元に戻す</dt><dd>⌘Z</dd><dt>画面を動かす</dt><dd>スペース＋ドラッグ</dd></dl>`;
+      <dl class="stats"><dt>削除</dt><dd>Delete</dd><dt>複製</dt><dd>⌘D</dd><dt>グループ / 解除</dt><dd>⌘G / ⇧⌘G</dd><dt>コピー / 貼り付け</dt><dd>⌘C / ⌘V</dd><dt>15° 回転</dt><dd>Q / E</dd><dt>少し動かす</dt><dd>矢印キー</dd><dt>元に戻す</dt><dd>⌘Z</dd><dt>画面を動かす</dt><dd>スペース＋ドラッグ</dd></dl>`;
   } else if (list.length === 1 && list[0].kind === 'item') {
     const o = list[0], p = PRE[o.p] || PRE.custom, circ = p.shape === 'circle';
     h = `<h2>選択中</h2><div class="kind"><strong>${p.name}</strong><span>${o.w}×${o.h} cm</span></div>
@@ -538,6 +560,7 @@ function renderPanel() {
         <label class="field">中心 y<input type="number" id="p-y" value="${r1(o.y)}" step="5"></label>
       </div>
       <div class="actions"><button class="act" data-act="rot:-90">⟲ 90°</button><button class="act" data-act="rot:90">⟳ 90°</button>${circ ? '' : '<button class="act" data-act="swap">縦横入れ替え</button>'}</div>
+      ${o.group ? '<p class="note">グループの中の1つを選んでいます。</p><div class="actions"><button class="act" data-act="ungroup">グループから外す</button></div>' : ''}
       <div class="actions"><button class="act" data-act="dup">複製</button><button class="act danger" data-act="del">削除</button></div>`;
   } else if (list.length === 1) {
     const a = list[0];
@@ -552,7 +575,10 @@ function renderPanel() {
   } else {
     const tables = list.filter(o => o.kind === 'item' && (PRE[o.p] || PRE.custom).cat === 'table');
     const chairs = list.filter(o => o.kind === 'item' && o.p === 'chair').length;
-    h = `<h2>選択中</h2><div class="kind"><strong>${list.length} 個</strong><span>机 ${tables.length} ・ 椅子 ${chairs}</span></div>
+    const g = selGroup(), anyG = list.some(o => o.group);
+    h = `<h2>選択中</h2><div class="kind"><strong>${g ? 'グループ' : list.length + ' 個'}</strong><span>机 ${tables.length} ・ 椅子 ${chairs}</span></div>
+      <div class="actions">${g ? '' : '<button class="act primary" data-act="group">グループにする</button>'}${anyG ? '<button class="act" data-act="ungroup">グループ解除</button>' : ''}</div>
+      ${g ? '<p class="note">まとめて動かせます。中の1つだけ変えたいときはダブルクリック。</p>' : ''}
       <div class="actions"><button class="act" data-act="rot:-15">⟲ 15°</button><button class="act" data-act="rot:15">⟳ 15°</button><button class="act" data-act="rot:-90">⟲ 90°</button><button class="act" data-act="rot:90">⟳ 90°</button></div>
       ${tables.length ? `<hr><h2>机に番号をふる</h2><div class="field-grid"><label class="field">最初の番号<input type="number" id="p-start" value="1" min="0"></label></div>
       <p class="note">選んだ机に、上の列から左→右の順で番号を付けます。</p><div class="actions"><button class="act primary" data-act="number">番号をふる</button><button class="act" data-act="clearnum">番号を消す</button></div><hr>` : ''}
@@ -591,6 +617,8 @@ panel.addEventListener('click', e => {
   if (act === 'room-done') return setRoomEdit(false);
   if (act === 'del') return delSel();
   if (act === 'dup') return duplicate();
+  if (act === 'group') return groupSel();
+  if (act === 'ungroup') return ungroupSel();
   if (act.startsWith('rot:')) return rotateSel(parseFloat(act.slice(4)));
   const list = [...sel].map(byId).filter(Boolean);
   if (act === 'swap') mutate(() => { const o = list[0]; [o.w, o.h] = [o.h, o.w]; });
@@ -616,8 +644,10 @@ function delSel() {
   sel.clear(); render(); renderPanel();
 }
 function cloneObjs(list, dx, dy) {
+  const gmap = {};
   return list.map(o => {
     const c = JSON.parse(JSON.stringify(o)); c.id = uid();
+    if (c.group) c.group = gmap[c.group] || (gmap[c.group] = uid());
     if (c.kind === 'item') { c.x += dx; c.y += dy; } else c.pts = c.pts.map(([x, y]) => [x + dx, y + dy]);
     return c;
   });
@@ -635,6 +665,15 @@ function paste() {
   const cl = cloneObjs(clip.list, 30 * clip.n, 30 * clip.n);
   mutate(() => doc.objs.push(...cl));
   sel = new Set(cl.map(c => c.id)); render(); renderPanel();
+}
+function groupSel() {
+  if (sel.size < 2) return;
+  const g = uid();
+  mutate(() => doc.objs.forEach(o => { if (sel.has(o.id)) o.group = g; }));
+}
+function ungroupSel() {
+  const list = doc.objs.filter(o => sel.has(o.id) && o.group); if (!list.length) return;
+  mutate(() => list.forEach(o => { delete o.group; }));
 }
 function rotateSel(deg) {
   const list = doc.objs.filter(o => sel.has(o.id)); if (!list.length) return;
@@ -715,8 +754,9 @@ svg.addEventListener('pointerdown', e => {
   const t = e.target.closest('[data-id]');
   if (t) {
     const id = t.dataset.id;
-    if (e.shiftKey) { sel.has(id) ? sel.delete(id) : sel.add(id); render(); renderPanel(); return; }
-    if (!sel.has(id)) sel = new Set([id]);
+    const ids = withGroups([id]);
+    if (e.shiftKey) { const on = !sel.has(id); ids.forEach(i => on ? sel.add(i) : sel.delete(i)); render(); renderPanel(); return; }
+    if (!sel.has(id)) sel = ids;
     const first = byId([...sel][0]);
     drag = {
       type: 'move', start: w, before: snapshot(), moved: false,
@@ -770,6 +810,7 @@ svg.addEventListener('pointermove', e => {
     const x0 = Math.min(drag.a[0], w[0]), x1 = Math.max(drag.a[0], w[0]), y0 = Math.min(drag.a[1], w[1]), y1 = Math.max(drag.a[1], w[1]);
     sel = new Set(drag.base);
     doc.objs.forEach(o => { const [cx, cy] = center(o); if (cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1) sel.add(o.id); });
+    sel = withGroups(sel);
     render();
   }
 });
@@ -793,7 +834,10 @@ svg.addEventListener('dblclick', e => {
     if (k === 'rv' && doc.room.length > 3) return mutate(() => doc.room.splice(+i, 1));
     if (k === 'v') { const a = byId([...sel][0]); if (a && a.pts.length > 3) mutate(() => a.pts.splice(+i, 1)); return; }
   }
-  if (tool === 'poly' && poly) finishPoly();
+  if (tool === 'poly' && poly) return finishPoly();
+  // グループの中の1つだけを選ぶ
+  const t = e.target.closest('[data-id]');
+  if (t && tool === 'select' && !roomEdit) { sel = new Set([t.dataset.id]); render(); renderPanel(); }
 });
 svg.addEventListener('wheel', e => {
   e.preventDefault();
@@ -862,6 +906,7 @@ window.addEventListener('keydown', e => {
   if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if (mod && k === 'y') { e.preventDefault(); redo(); return; }
   if (mod && k === 'd') { e.preventDefault(); duplicate(); return; }
+  if (mod && k === 'g') { e.preventDefault(); e.shiftKey ? ungroupSel() : groupSel(); return; }
   if (mod && k === 'c') { const l = doc.objs.filter(o => sel.has(o.id)); if (l.length) clip = { list: JSON.parse(JSON.stringify(l)), n: 0 }; return; }
   if (mod && k === 'v') { e.preventDefault(); paste(); return; }
   if (mod && k === 'a') { e.preventDefault(); sel = new Set(doc.objs.map(o => o.id)); render(); renderPanel(); return; }
@@ -918,6 +963,20 @@ $('#btn-file').addEventListener('click', () => {
   };
   armed($('#m-sample'), () => { mutate(() => { doc = sampleDoc(); }); sel.clear(); renderTags(); fitView(); closeModal(); });
   armed($('#m-clear'), () => { mutate(() => { doc.objs = []; }); sel.clear(); renderPanel(); closeModal(); });
+});
+
+// リセット：1回目で確認表示、3秒以内にもう一度押すと最初の配置に戻す（⌘Z で取り消せる）
+$('#btn-reset').addEventListener('click', e => {
+  const b = e.currentTarget;
+  if (b.dataset.armed !== '1') {
+    b.dataset.armed = '1'; b.textContent = 'もう一度押すとリセット'; b.style.color = 'var(--danger)';
+    setTimeout(() => { b.dataset.armed = ''; b.textContent = 'リセット'; b.style.color = ''; }, 3000);
+    return;
+  }
+  b.dataset.armed = ''; b.textContent = 'リセット'; b.style.color = '';
+  mutate(() => { doc = sampleDoc(); });
+  sel.clear(); roomEdit = false; poly = null; tool = 'select';
+  renderTags(); fitView(); renderPanel();
 });
 
 $('#btn-png').addEventListener('click', () => {
