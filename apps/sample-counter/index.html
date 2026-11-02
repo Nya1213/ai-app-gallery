@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>カウンター</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: system-ui, sans-serif;
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      color: #fff;
+      text-align: center;
+    }
+    #count { font-size: 96px; font-weight: bold; }
+    button {
+      font-size: 24px;
+      padding: 12px 32px;
+      border: none;
+      border-radius: 999px;
+      cursor: pointer;
+    }
+    a { color: #fff; display: block; margin-top: 32px; }
+  </style>
+</head>
+<body>
+  <div>
+    <div id="count">0</div>
+    <button id="btn">+1</button>
+    <a href="../../index.html">← 一覧に戻る</a>
+  </div>
+  <script>
+    let n = 0;
+    document.getElementById("btn").onclick = () => {
+      document.getElementById("count").textContent = ++n;
+    };
+  </script>
+</body>
+</html>

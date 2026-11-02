@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI App Gallery</title>
+  <meta name="description" content="AIと一緒に作ったアプリを公開しています">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <h1 class="site-title">AI App Gallery</h1>
+      <p class="site-lead">AIと一緒に作ったアプリ置き場。気になるものを押すとすぐ遊べます。</p>
+    </div>
+  </header>
+
+  <nav class="filter-bar">
+    <div class="container filter-inner">
+      <div class="filter-buttons" role="group" aria-label="対応端末で絞り込み">
+        <button class="filter-btn is-active" data-filter="all">すべて</button>
+        <button class="filter-btn" data-filter="mobile">📱 スマホ</button>
+        <button class="filter-btn" data-filter="pc">💻 PC</button>
+      </div>
+      <span class="result-count" id="result-count"></span>
+    </div>
+  </nav>
+
+  <main class="container">
+    <div class="app-grid" id="app-grid"></div>
+    <p class="empty" id="empty" hidden>該当するアプリはまだありません。</p>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">このサイトのアプリは生成AIを活用して制作しています。</div>
+  </footer>
+
+  <script src="apps.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
