@@ -258,6 +258,8 @@ const DEFAULT_TAGS = [
   { name: '設備・立入不可', color: '#3d4245' },
 ];
 const STORE_KEY = 'shokudo-mitorizu-v3';
+// Claude のページの中ではファイルのダウンロードができないので、そこでは「ファイルに保存」を出さない
+const CAN_DOWNLOAD = !/claude/i.test(location.hostname);
 const FONT = "'Zen Kaku Gothic New','Hiragino Sans',sans-serif";
 
 const $ = s => document.querySelector(s);
@@ -365,10 +367,71 @@ function afterLoad() { sel = new Set([...sel].filter(byId)); save(); render(); r
 let saveTimer;
 function save() { clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { localStorage.setItem(STORE_KEY, snapshot()); } catch (e) {} }, 300); }
 function load() {
-  try { const s = localStorage.getItem(STORE_KEY); if (s) { const d = JSON.parse(s); if (valid(d)) return d; } } catch (e) {}
+  try { const s = localStorage.getItem(STORE_KEY); if (s) { const d = JSON.parse(s); if (valid(d)) return sanitize(d); } } catch (e) {}
   return sampleDoc();
 }
 function valid(d) { return d && Array.isArray(d.room) && d.room.length >= 3 && Array.isArray(d.objs); }
+// 読み込んだデータの欠けた所を補い、壊れた家具・エリアは捨てる
+function sanitize(d) {
+  const num = v => typeof v === 'number' && isFinite(v);
+  d.tags = Array.isArray(d.tags) ? d.tags.filter(t => t && t.name) : DEFAULT_TAGS.map(t => ({ ...t }));
+  d.objs = d.objs.filter(o => o && (o.kind === 'item'
+    ? PRE[o.p] && num(o.x) && num(o.y) && num(o.w) && num(o.h)
+    : o.kind === 'area' && Array.isArray(o.pts) && o.pts.length >= 3 && o.pts.every(p => Array.isArray(p) && num(p[0]) && num(p[1])) && o.tag));
+  d.objs.forEach(o => {
+    if (!o.id) o.id = uid();
+    if (o.kind === 'item') { o.rot = num(o.rot) ? o.rot : 0; o.label = o.label || ''; }
+    else { o.label = o.label || ''; if (!d.tags.some(t => t.name === o.tag)) d.tags.push({ name: o.tag, color: '#7d8c94' }); }
+  });
+  d.showNums = !!d.showNums;
+  return d;
+}
+// 途中で切れた JSON から、最後まで書かれていた所までを取り出す
+function salvageJSON(txt) {
+  const st = [], cands = []; let inStr = false, escp = false;
+  for (let i = 0; i < txt.length; i++) {
+    const c = txt[i];
+    if (inStr) { if (escp) escp = false; else if (c === '\\') escp = true; else if (c === '"') inStr = false; continue; }
+    if (c === '"') inStr = true;
+    else if (c === '{' || c === '[') st.push(c);
+    else if (c === '}' || c === ']') { st.pop(); if (st.length) cands.push([i + 1, st.slice()]); }
+  }
+  for (let k = cands.length - 1; k >= 0 && k >= cands.length - 300; k--) {
+    const [pos, s] = cands[k];
+    try { const d = JSON.parse(txt.slice(0, pos) + s.reverse().map(c => c === '{' ? '}' : ']').join('')); if (valid(d)) return d; } catch (e) {}
+  }
+  return null;
+}
+// 共有用の短いコード（圧縮して英数字にしたもの）
+const CODE_HEAD = 'MTZ1:';
+async function packDoc() {
+  const json = JSON.stringify(doc);
+  if (!window.CompressionStream) return json;
+  try {
+    const s = new Blob([json]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+    const u = new Uint8Array(await new Response(s).arrayBuffer());
+    let bin = ''; for (let i = 0; i < u.length; i += 8192) bin += String.fromCharCode(...u.subarray(i, i + 8192));
+    return CODE_HEAD + btoa(bin);
+  } catch (e) { return json; }
+}
+// 戻り値: { doc, partial } または null
+async function unpackText(txt) {
+  txt = txt.trim();
+  const at = txt.indexOf(CODE_HEAD);
+  if (at >= 0) {
+    try {
+      const bin = atob(txt.slice(at + CODE_HEAD.length).replace(/[^A-Za-z0-9+/=]/g, ''));
+      const s = new Blob([Uint8Array.from(bin, c => c.charCodeAt(0))]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      const d = JSON.parse(await new Response(s).text());
+      return valid(d) ? { doc: sanitize(d), partial: false } : null;
+    } catch (e) { return null; }
+  }
+  const start = txt.indexOf('{'); if (start < 0) return null;
+  txt = txt.slice(start);
+  try { const d = JSON.parse(txt); if (valid(d)) return { doc: sanitize(d), partial: false }; } catch (e) {}
+  const d = salvageJSON(txt);
+  return d ? { doc: sanitize(d), partial: true } : null;
+}
 function updateButtons() { $('#undo').disabled = !undoStack.length; $('#redo').disabled = !redoStack.length; }
 
 /* ---------- 描画 ---------- */
@@ -939,41 +1002,39 @@ $('#modal').addEventListener('click', e => { if (e.target.id === 'modal' || e.ta
 
 $('#btn-file').addEventListener('click', () => {
   openModal(`<header><h2>保存・読込</h2><button class="act" data-close>閉じる</button></header>
-    <p class="note">変更はこのブラウザに自動保存されます。別のパソコンへ移す・友だちに渡すときは、下の文字をコピーして保存してください。読み込むときは貼り付けて「この内容を読み込む」。</p>
-    <textarea id="json" spellcheck="false">${esc(JSON.stringify(doc))}</textarea>
-    <div class="actions"><button class="act primary" id="m-copy">コピー</button><button class="act" id="m-save">ファイルに保存</button><button class="act" id="m-load">この内容を読み込む</button>
-      <label class="act" for="m-file">ファイルから読み込む</label><input type="file" id="m-file" accept=".json,application/json,text/plain" hidden></div>
+    <p class="note">変更はこのブラウザに自動保存されます。別のパソコンへ移す・友だちに渡すときは、下の保存コードをコピーしてメモなどに貼っておいてください。読み込むときは貼り付けて「この内容を読み込む」。</p>
+    <textarea id="json" spellcheck="false" aria-label="保存コード">作成中…</textarea>
+    <p class="note" id="m-len"></p>
+    <div class="actions"><button class="act primary" id="m-copy">コピー</button><button class="act" id="m-load">この内容を読み込む</button>
+      ${CAN_DOWNLOAD ? '<button class="act" id="m-dl">ファイルに保存</button>' : ''}
+      <label class="act" for="m-file">ファイルから読み込む</label><input type="file" id="m-file" accept=".json,.txt,application/json,text/plain" hidden></div>
     <hr><div class="actions"><button class="act" id="m-sample">食堂のサンプルに戻す</button><button class="act danger" id="m-clear">家具とエリアを全部消す</button></div>
     <p class="msg" id="m-msg"></p>`);
   const msg = t => { $('#m-msg').textContent = t; };
-  // 途中で切れた文字でも、最後まで残っている家具・エリアまでは読み込めるようにする
-  const salvage = txt => {
-    let end = txt.length;
-    while ((end = txt.lastIndexOf('},{', end - 1)) > 0) {
-      try { const d = JSON.parse(txt.slice(0, end + 1) + ']}'); if (valid(d)) return d; } catch (e) {}
-    }
-    return null;
-  };
-  const loadText = txt => {
-    txt = txt.trim();
-    let d = null, cut = false;
-    try { d = JSON.parse(txt); } catch (e) { d = salvage(txt); cut = true; }
-    if (!valid(d)) { msg('読み込めませんでした。このアプリで書き出した文字をそのまま貼り付けてください。'); return; }
-    d.tags = d.tags || DEFAULT_TAGS.map(t => ({ ...t }));
-    mutate(() => { doc = d; }); sel.clear(); renderTags(); fitView(); renderPanel();
-    msg(cut ? `文字が途中で切れていたので、読み取れた ${d.objs.length} 個だけ読み込みました。次からは「ファイルに保存」を使うと確実です。` : '読み込みました。');
-  };
-  $('#m-save').onclick = () => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(doc)], { type: 'application/json' }));
-    a.download = '見取り図.json'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    msg('ファイルに保存しました。読み込むときは「ファイルから読み込む」を使ってください。');
+  packDoc().then(code => {
+    $('#json').value = code;
+    $('#m-len').textContent = `${code.length.toLocaleString()} 文字。最後まで全部コピーしてください（途中で切れると一部しか戻りません）。`;
+  });
+  const loadText = async txt => {
+    const r = await unpackText(txt);
+    if (!r) { msg('読み込めませんでした。このアプリの保存コードを、最初から最後までそのまま貼り付けてください。'); return; }
+    mutate(() => { doc = r.doc; }); sel.clear(); renderTags(); fitView(); renderPanel();
+    msg(r.partial
+      ? `データが途中で切れていたので、読めたところまで（家具・エリア ${r.doc.objs.length} 個）を読み込みました。足りない分は置き直してください。`
+      : `読み込みました（家具・エリア ${r.doc.objs.length} 個）。`);
   };
   $('#m-copy').onclick = () => {
     const ta = $('#json');
     navigator.clipboard.writeText(ta.value).then(() => msg('コピーしました。メモ帳などに貼って保存してください。'), () => { ta.select(); msg('自動でコピーできなかったので、選択した文字を ⌘C でコピーしてください。'); });
   };
   $('#m-load').onclick = () => loadText($('#json').value);
+  if (CAN_DOWNLOAD) $('#m-dl').onclick = () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(doc)], { type: 'application/json' }));
+    a.download = '食堂見取り図.json'; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    msg('ファイルを保存しました。「ファイルから読み込む」で戻せます。');
+  };
   $('#m-file').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => loadText(r.result); r.readAsText(f); };
   const armed = (btn, fn) => btn.onclick = () => {
     if (btn.dataset.armed === '1') { fn(); return; }
