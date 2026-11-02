@@ -18,6 +18,17 @@
 
 const APPS = [
   {
+    title: "食堂見取り図メーカー",
+    description: "寮の食堂に机や椅子を並べて、通路・階段などのエリアにタグを付けられる見取り図エディタ。",
+    author: "Takumi",
+    platforms: ["pc"],
+    url: "apps/shokudo-mitorizu/index.html",
+    image: "",
+    emoji: "🪑",
+    color: ["#1d6a66", "#52b5aa"],
+    tags: ["ツール"],
+  },
+  {
     title: "サンプル：カウンター",
     description: "ボタンを押すと数が増えるだけのシンプルなアプリ。追加方法の見本です。",
     author: "Takumi",
