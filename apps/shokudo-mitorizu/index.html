@@ -941,14 +941,33 @@ $('#btn-file').addEventListener('click', () => {
   openModal(`<header><h2>保存・読込</h2><button class="act" data-close>閉じる</button></header>
     <p class="note">変更はこのブラウザに自動保存されます。別のパソコンへ移す・友だちに渡すときは、下の文字をコピーして保存してください。読み込むときは貼り付けて「この内容を読み込む」。</p>
     <textarea id="json" spellcheck="false">${esc(JSON.stringify(doc))}</textarea>
-    <div class="actions"><button class="act primary" id="m-copy">コピー</button><button class="act" id="m-load">この内容を読み込む</button>
+    <div class="actions"><button class="act primary" id="m-copy">コピー</button><button class="act" id="m-save">ファイルに保存</button><button class="act" id="m-load">この内容を読み込む</button>
       <label class="act" for="m-file">ファイルから読み込む</label><input type="file" id="m-file" accept=".json,application/json,text/plain" hidden></div>
     <hr><div class="actions"><button class="act" id="m-sample">食堂のサンプルに戻す</button><button class="act danger" id="m-clear">家具とエリアを全部消す</button></div>
     <p class="msg" id="m-msg"></p>`);
   const msg = t => { $('#m-msg').textContent = t; };
+  // 途中で切れた文字でも、最後まで残っている家具・エリアまでは読み込めるようにする
+  const salvage = txt => {
+    let end = txt.length;
+    while ((end = txt.lastIndexOf('},{', end - 1)) > 0) {
+      try { const d = JSON.parse(txt.slice(0, end + 1) + ']}'); if (valid(d)) return d; } catch (e) {}
+    }
+    return null;
+  };
   const loadText = txt => {
-    try { const d = JSON.parse(txt); if (!valid(d)) throw 0; d.tags = d.tags || DEFAULT_TAGS.map(t => ({ ...t })); mutate(() => { doc = d; }); sel.clear(); renderTags(); fitView(); renderPanel(); msg('読み込みました。'); }
-    catch (err) { msg('読み込めませんでした。このアプリで書き出した文字をそのまま貼り付けてください。'); }
+    txt = txt.trim();
+    let d = null, cut = false;
+    try { d = JSON.parse(txt); } catch (e) { d = salvage(txt); cut = true; }
+    if (!valid(d)) { msg('読み込めませんでした。このアプリで書き出した文字をそのまま貼り付けてください。'); return; }
+    d.tags = d.tags || DEFAULT_TAGS.map(t => ({ ...t }));
+    mutate(() => { doc = d; }); sel.clear(); renderTags(); fitView(); renderPanel();
+    msg(cut ? `文字が途中で切れていたので、読み取れた ${d.objs.length} 個だけ読み込みました。次からは「ファイルに保存」を使うと確実です。` : '読み込みました。');
+  };
+  $('#m-save').onclick = () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(doc)], { type: 'application/json' }));
+    a.download = '見取り図.json'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    msg('ファイルに保存しました。読み込むときは「ファイルから読み込む」を使ってください。');
   };
   $('#m-copy').onclick = () => {
     const ta = $('#json');
