@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font-size:14px}</style>
+<title>霧将棋</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;700&display=swap">
+<style>
+/* Layout: one-column hot-seat table — opponent's hand, kaya board, own hand; fog hides what you cannot see. */
+:root{
+  --table:#191714;      /* lacquered table */
+  --table-2:#24211d;
+  --paper:#efe6d3;      /* text */
+  --muted:#a89d8a;
+  --kaya:#e3bb6c;       /* board wood */
+  --kaya-2:#d6a854;
+  --line:#4a3417;       /* ink grid */
+  --koma:#f3dca4;       /* piece face */
+  --koma-2:#d9b066;
+  --sumi:#1b130a;       /* piece ink */
+  --shu:#b8321f;        /* promoted ink */
+  --fog:#2b3140;        /* fog of war */
+  --fog-2:#353c4d;
+  --ai:#4d74c9;         /* selection / targets */
+  --warn-bg:#4a1f19;
+  --warn-fg:#ffd2c7;
+  --info-bg:#2b2a24;
+  --f-display:"Shippori Mincho B1","Hiragino Mincho ProN","Yu Mincho",serif;
+  --f-ui:"Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+  --bw:min(calc(100vw - 32px), 440px, max(270px, calc((100dvh - 290px) / 1.1)));
+  --cw:calc(var(--bw) / 9);
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{background:radial-gradient(120% 80% at 50% 0%, var(--table-2), var(--table)) fixed;background-color:var(--table);color:var(--paper);font-family:var(--f-ui);-webkit-tap-highlight-color:transparent}
+#app{max-width:480px;margin:0 auto;padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));padding-block:12px 24px;display:flex;flex-direction:column;align-items:center;gap:10px;min-height:100%;box-sizing:border-box}
+#app > *{width:100%}
+#app > .board{width:var(--bw)}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--ai);outline-offset:2px}
+
+/* ---------- headings & buttons ---------- */
+.bar{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.bar .who{font-family:var(--f-display);font-size:1.35rem;font-weight:800;letter-spacing:.04em}
+.bar .no{color:var(--muted);font-size:.85rem;font-variant-numeric:tabular-nums}
+.btn{appearance:none;border:1px solid #5a5040;background:var(--table-2);border-radius:10px;padding:12px 16px;font-weight:700;cursor:pointer;min-height:46px}
+.btn.primary{background:var(--kaya);color:var(--sumi);border-color:var(--kaya-2)}
+.btn.danger{background:var(--shu);border-color:var(--shu);color:#fff}
+.btn.ghost{background:transparent}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.row > .btn{flex:1 1 0}
+.hint{color:var(--muted);font-size:.86rem;line-height:1.6;margin:0}
+
+/* ---------- board ---------- */
+.board{position:relative;display:grid;grid-template-columns:repeat(9,1fr);grid-template-rows:repeat(9, calc(var(--cw) * 1.1));
+  background:
+    repeating-linear-gradient(91deg, rgba(120,80,20,.06) 0 3px, transparent 3px 11px),
+    linear-gradient(170deg, var(--kaya), var(--kaya-2));
+  border:2px solid var(--line);box-shadow:0 10px 30px rgba(0,0,0,.5), 0 0 0 6px #6b4a1e;border-radius:2px;margin-block:6px}
+.cell{appearance:none;border:0;padding:0;margin:0;background:transparent;box-shadow:inset 0 0 0 .5px var(--line);position:relative;display:grid;place-items:center;cursor:pointer;min-width:0}
+.board.still .cell,.board.reveal .cell{cursor:default}
+.cell.fog{background:repeating-linear-gradient(135deg, var(--fog) 0 5px, var(--fog-2) 5px 10px);box-shadow:inset 0 0 0 .5px #1d212b}
+.cell.editable{background-color:rgba(255,255,255,.08)}
+.cell.last{background-color:rgba(255,236,150,.55)}
+.cell.sel{background-color:rgba(77,116,201,.45)}
+.cell.tgt::after{content:"";position:absolute;width:28%;height:26%;border-radius:50%;background:var(--ai);opacity:.85;pointer-events:none}
+.cell.tgt.cap::after{width:88%;height:88%;background:transparent;border:3px solid var(--ai);border-radius:6px;opacity:1;box-sizing:border-box}
+.zline{position:absolute;left:0;right:0;height:2px;background:var(--line);pointer-events:none;transform:translateY(-1px)}
+.star{position:absolute;width:7px;height:7px;border-radius:50%;background:var(--line);transform:translate(-50%,-50%);pointer-events:none}
+.zlabel{position:absolute;right:-2px;transform:translate(100%,-50%);font-size:.6rem;color:var(--muted);writing-mode:vertical-rl;pointer-events:none}
+
+/* ---------- pieces ---------- */
+.pc{position:relative;width:84%;height:90%;display:grid;place-items:center;filter:drop-shadow(0 1.5px 1px rgba(0,0,0,.45));pointer-events:none}
+.pc::before{content:"";position:absolute;inset:0;background:linear-gradient(175deg,var(--koma),var(--koma-2));clip-path:polygon(50% 0,83% 13%,97% 100%,3% 100%,17% 13%)}
+.pc > span{position:relative;font-family:var(--f-display);font-weight:800;font-size:calc(var(--cw) * .54);line-height:1;color:var(--sumi);padding-top:14%}
+.pc.enemy{transform:rotate(180deg)}
+.pc.pro > span{color:var(--shu)}
+.pc.king > span{font-size:calc(var(--cw) * .58)}
+
+/* ---------- hands ---------- */
+.hand{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-height:44px;padding:4px 8px;border-radius:10px;background:rgba(0,0,0,.22);box-sizing:border-box}
+.hand .hl{font-size:.75rem;color:var(--muted);letter-spacing:.06em;margin-right:4px}
+.hand .none{font-size:.8rem;color:#6f6656}
+.hp{appearance:none;border:0;background:transparent;width:calc(var(--cw) * .95);height:calc(var(--cw) * 1.05);position:relative;display:grid;place-items:center;padding:0;cursor:pointer;border-radius:6px}
+.hp[disabled]{cursor:default}
+.hp .pc{width:86%;height:90%}
+.hp em{position:absolute;right:-4px;bottom:-2px;font-style:normal;font-size:.72rem;font-weight:700;background:var(--sumi);color:var(--koma);border-radius:8px;padding:0 5px;font-variant-numeric:tabular-nums}
+.hp.sel{background:rgba(77,116,201,.55)}
+.opp .pc > span{font-size:calc(var(--cw) * .44)}
+
+/* ---------- notices ---------- */
+.notes{display:flex;flex-direction:column;gap:6px}
+.note{border-radius:10px;padding:9px 12px;font-size:.9rem;line-height:1.5;background:var(--info-bg)}
+.note.warn{background:var(--warn-bg);color:var(--warn-fg);font-weight:700}
+.note.warn small{display:block;font-weight:400;opacity:.8;font-size:.78rem}
+
+/* ---------- footer, sheet, screens ---------- */
+.foot{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.foot .confirm{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.sheet{position:fixed;left:0;right:0;bottom:0;background:#2c2822;border-top:1px solid #4d4537;box-shadow:0 -12px 30px rgba(0,0,0,.5);
+  padding:16px max(16px, env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));z-index:5}
+.sheet .in{max-width:448px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+.sheet h3{margin:0;font-family:var(--f-display);font-size:1.2rem}
+.sheet ul{margin:0;padding-left:1.2em;line-height:1.7}
+.screen{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:18px;flex:1;padding-block:24px}
+.screen .mark{font-size:5.5rem;line-height:1;color:var(--kaya)}
+.screen h2{font-family:var(--f-display);font-size:1.6rem;margin:0;text-wrap:balance}
+.screen .btn{min-width:220px;font-size:1.1rem;padding:16px 24px}
+.title h1{font-family:var(--f-display);font-weight:800;font-size:3.6rem;margin:0;letter-spacing:.12em;line-height:1}
+.title .sub{color:var(--muted);margin:0}
+.rules{text-align:left;max-width:36em;background:rgba(0,0,0,.25);border-radius:12px;padding:14px 18px 14px 34px;margin:0;line-height:1.75;font-size:.9rem}
+.rules b{color:var(--kaya)}
+@media (prefers-reduced-motion:no-preference){.screen{animation:rise .35s ease-out}@keyframes rise{from{opacity:.4;transform:translateY(6px)}}}
+</style>
+
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+const NAME={K:'王',R:'飛',B:'角',G:'金',S:'銀',N:'桂',L:'香',P:'歩'};
+const PROM={R:'龍',B:'馬',S:'全',N:'圭',L:'杏',P:'と'};
+const MARK=['☗','☖'], SIDE=['先手','後手'];
+const ORDER=['R','B','G','S','N','L','P'];
+const KN='一二三四五六七八九';
+const ORTH=[[-1,0],[1,0],[0,-1],[0,1]], DIAG=[[-1,-1],[-1,1],[1,-1],[1,1]];
+const GOLD=[[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,0]];
+const MOVES={K:{step:[...ORTH,...DIAG]},G:{step:GOLD},S:{step:[[-1,-1],[-1,0],[-1,1],[1,-1],[1,1]]},
+  N:{step:[[-2,-1],[-2,1]]},P:{step:[[-1,0]]},L:{slide:[[-1,0]]},R:{slide:ORTH},B:{slide:DIAG}};
+
+let S;
+const app=document.getElementById('app');
+
+function fresh(){
+  return {phase:'title',board:Array.from({length:9},()=>Array(9).fill(null)),hands:[{},{}],
+    setupPlayer:0,turn:0,sel:null,targets:[],notices:[[],[]],lastMove:null,moveNo:0,
+    moverMsg:[],winner:null,endReason:'',pending:null,confirmResign:false,coverNext:null};
+}
+
+/* ---------- helpers ---------- */
+const inB=(r,c)=>r>=0&&r<9&&c>=0&&c<9;
+const zoneOf=r=>r<=2?1:r>=6?0:'mid';            // rows 0-2: 後手陣, 6-8: 先手陣
+const zoneRows=o=>o===0?[6,7,8]:[0,1,2];
+const sq=(r,c)=>(9-c)+KN[r];
+const rel=(r,o)=>o===0?r:8-r;                    // 0 = the far edge for player o
+const kingName=o=>o===0?'王':'玉';
+const baseName=(t,o)=>t==='K'?kingName(o):NAME[t];
+const pieceName=p=>p.p?PROM[p.t]:baseName(p.t,p.o);
+function moveset(p){
+  if(!p.p) return MOVES[p.t];
+  if(p.t==='R') return {step:DIAG,slide:ORTH};
+  if(p.t==='B') return {step:ORTH,slide:DIAG};
+  return {step:GOLD};
+}
+// What player v can see: own pieces anywhere, any piece in the middle three rows.
+function known(r,c,v){const p=S.board[r][c];return p&&(p.o===v||zoneOf(r)==='mid')?p:null}
+function countInvaders(v){let n=0;for(const r of zoneRows(v))for(let c=0;c<9;c++){const p=S.board[r][c];if(p&&p.o!==v)n++}return n}
+
+function placeStandard(o){
+  for(const r of zoneRows(o))for(let c=0;c<9;c++)S.board[r][c]=null;
+  ['PPPPPPPPP','.B.....R.','LNSGKGSNL'].forEach((s,i)=>[...s].forEach((ch,c)=>{
+    if(ch==='.')return;
+    const r=6+i;
+    if(o===0)S.board[r][c]={t:ch,o,p:false};else S.board[8-r][8-c]={t:ch,o,p:false};
+  }));
+}
+function randomize(o){
+  const pcs=[],cells=[];
+  for(const r of zoneRows(o))for(let c=0;c<9;c++){cells.push([r,c]);if(S.board[r][c])pcs.push(S.board[r][c]);S.board[r][c]=null}
+  for(let i=cells.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[cells[i],cells[j]]=[cells[j],cells[i]]}
+  pcs.forEach((p,i)=>{const [r,c]=cells[i];S.board[r][c]=p});
+}
+
+/* ---------- rules ---------- */
+// Moves are generated from the mover's knowledge: hidden squares look empty.
+function genMoves(r,c){
+  const p=S.board[r][c],v=p.o,f=v===0?1:-1,ms=moveset(p),out=[];
+  for(const [dr,dc] of ms.step||[]){
+    const nr=r+dr*f,nc=c+dc*f;
+    if(!inB(nr,nc))continue;
+    const k=known(nr,nc,v);
+    if(k&&k.o===v)continue;
+    out.push({r:nr,c:nc,path:[[nr,nc]]});
+  }
+  for(const [dr,dc] of ms.slide||[]){
+    let nr=r+dr*f,nc=c+dc*f;const path=[];
+    while(inB(nr,nc)){
+      const k=known(nr,nc,v);
+      if(k&&k.o===v)break;
+      path.push([nr,nc]);out.push({r:nr,c:nc,path:path.slice()});
+      if(k)break;
+      nr+=dr*f;nc+=dc*f;
+    }
+  }
+  return out;
+}
+function dropTargets(t,v){
+  const out=[];
+  for(let r=0;r<9;r++)for(let c=0;c<9;c++){
+    if(known(r,c,v))continue;
+    const d=rel(r,v);
+    if((t==='P'||t==='L')&&d===0)continue;
+    if(t==='N'&&d<=1)continue;
+    if(t==='P'&&S.board.some(row=>{const q=row[c];return q&&q.o===v&&q.t==='P'&&!q.p}))continue; // 二歩
+    out.push({r,c});
+  }
+  return out;
+}
+const inPromoZone=(r,v)=>rel(r,v)<=2;
+function mustPromote(t,r,v){const d=rel(r,v);return ((t==='P'||t==='L')&&d===0)||(t==='N'&&d<=1)}
+
+function doMove(fr,fc,m){
+  const v=S.turn,p=S.board[fr][fc];
+  S.notices[v]=[];
+  let dest=m.path[m.path.length-1],blocked=false;
+  // A slider that runs into a hidden enemy stops there and takes it.
+  for(let i=0;i<m.path.length-1;i++){const [r,c]=m.path[i];if(S.board[r][c]){dest=[r,c];blocked=true;break}}
+  const [tr,tc]=dest,cap=S.board[tr][tc],msgs=[];
+  S.board[fr][fc]=null;S.board[tr][tc]=p;
+  if(blocked)msgs.push(`見えない駒にぶつかり、${sq(tr,tc)}で止まりました。`);
+  if(cap){
+    const nm=baseName(cap.t,cap.o);
+    S.hands[v][cap.t]=(S.hands[v][cap.t]||0)+1;
+    msgs.push(`相手の${pieceName(cap)}を取りました。`);
+    S.notices[1-v].push(`${sq(tr,tc)}の${pieceName(cap)}を取られました。`);
+    if(cap.t==='K'){S.winner=v;S.endReason=`${MARK[v]}${SIDE[v]}が${sq(tr,tc)}で${nm}を取りました。`}
+  }
+  S.pending={fr,fc,tr,tc,msgs,wasPro:p.p,promoted:false};
+  S.sel=null;S.targets=[];
+  if(!p.p&&PROM[p.t]&&(inPromoZone(fr,v)||inPromoZone(tr,v))){
+    if(mustPromote(p.t,tr,v)){p.p=true;S.pending.promoted=true;finishMove()}
+    else{S.phase='promo';render()}
+  }else finishMove();
+}
+function finishMove(){
+  const v=S.turn,{tr,tc,msgs,wasPro,promoted}=S.pending,p=S.board[tr][tc];
+  const nm=wasPro?PROM[p.t]:baseName(p.t,v);
+  msgs.unshift(`${MARK[v]}${sq(tr,tc)}${nm}${promoted?'成':''}`);
+  S.lastMove={by:v,to:[tr,tc]};S.moveNo++;S.pending=null;
+  if(S.winner!==null){S.phase='over';render();return}
+  S.moverMsg=msgs;S.phase='moved';render();
+}
+function doDrop(t,r,c){
+  const v=S.turn;
+  S.notices[v]=[];S.sel=null;S.targets=[];
+  if(S.board[r][c]){
+    S.moverMsg=[`${sq(r,c)}には見えない駒がありました。${NAME[t]}は打てず、この手番は終わりです。`];
+    S.lastMove={by:v,to:null};
+  }else{
+    S.board[r][c]={t,o:v,p:false};S.hands[v][t]--;
+    S.moverMsg=[`${MARK[v]}${sq(r,c)}${NAME[t]}打`];
+    S.lastMove={by:v,to:[r,c]};
+  }
+  S.moveNo++;S.phase='moved';render();
+}
+
+/* ---------- views ---------- */
+function pieceHTML(p,enemy){
+  return `<span class="pc${enemy?' enemy':''}${p.p?' pro':''}${p.t==='K'?' king':''}"><span>${pieceName(p)}</span></span>`;
+}
+function boardHTML(v,mode){
+  const T=new Set(S.targets.map(t=>t.r+','+t.c));
+  let h='';
+  for(let dr=0;dr<9;dr++)for(let dc=0;dc<9;dc++){
+    const r=v===0?dr:8-dr,c=v===0?dc:8-dc,z=zoneOf(r),p=S.board[r][c];
+    const fog=mode!=='reveal'&&z!=='mid'&&z!==v;
+    const show=!!p&&(mode==='reveal'||p.o===v||z==='mid');
+    const cls=['cell'];
+    if(fog)cls.push('fog');
+    if(mode==='setup'&&z===v)cls.push('editable');
+    if(S.sel&&S.sel.kind==='board'&&S.sel.r===r&&S.sel.c===c)cls.push('sel');
+    if(mode==='play'&&T.has(r+','+c)){cls.push('tgt');if(show)cls.push('cap')}
+    const lm=S.lastMove&&S.lastMove.to;
+    if(mode!=='setup'&&lm&&lm[0]===r&&lm[1]===c&&show)cls.push('last');
+    h+=`<button class="${cls.join(' ')}" data-r="${r}" data-c="${c}" aria-label="${sq(r,c)}"${mode==='play'||mode==='setup'?'':' tabindex="-1"'}>${show?pieceHTML(p,p.o!==v):''}</button>`;
+  }
+  const ov=`<i class="zline" style="top:33.333%"></i><i class="zline" style="top:66.667%"></i>`+
+    [[33.333,33.333],[66.667,33.333],[33.333,66.667],[66.667,66.667]].map(([x,y])=>`<i class="star" style="left:${x}%;top:${y}%"></i>`).join('');
+  return `<div class="board ${mode}">${h}${ov}</div>`;
+}
+function handHTML(o,interactive){
+  const items=ORDER.filter(t=>S.hands[o][t]>0);
+  if(!items.length)return '<span class="none">なし</span>';
+  return items.map(t=>{
+    const n=S.hands[o][t],sel=interactive&&S.sel&&S.sel.kind==='hand'&&S.sel.t===t;
+    return `<button class="hp${sel?' sel':''}" ${interactive?`data-hand="${t}" aria-label="持ち駒 ${NAME[t]}"`:'disabled'}><span class="pc"><span>${NAME[t]}</span></span>${n>1?`<em>${n}</em>`:''}</button>`;
+  }).join('');
+}
+
+function viewTitle(){
+  return `<div class="screen title">
+    <h1>霧将棋</h1>
+    <p class="sub">一台のスマホを二人で回す、見えない将棋</p>
+    <ol class="rules">
+      <li>先手、後手の順に、<b>自陣3段の中で駒を自由に並べます</b>。並べ終えたら相手に渡します。</li>
+      <li><b>中央の3段</b>はいつでも両者に見えます。<b>自陣の3段</b>は自分の番だけ見えます。敵陣は霧の中です。</li>
+      <li>相手の駒が自陣に入ると「相手のコマ◯個に侵入された」とだけ表示されます。どの駒がどこにいるかは出ません。</li>
+      <li>飛・角・香が見えない駒にぶつかると、そこで止まってその駒を取ります。見えない駒がいるマスに駒を打つと失敗し、手番が終わります。</li>
+      <li>王手の宣言はありません。<b>相手の玉（王）を取ったら勝ち</b>です。</li>
+    </ol>
+    <button class="btn primary" data-act="start">対局をはじめる</button>
+  </div>`;
+}
+function viewSetup(){
+  const v=S.setupPlayer;
+  return `<header class="bar"><div class="who">${MARK[v]}${SIDE[v]}の駒組み</div><div class="no">相手は見ないでください</div></header>
+    <p class="hint">明るい3段があなたの陣地です。駒をタップしてから移動先をタップすると動かせます（駒同士なら入れ替え）。</p>
+    ${boardHTML(v,'setup')}
+    <div class="row"><button class="btn" data-act="std">標準配置</button><button class="btn" data-act="rand">ランダム</button></div>
+    <button class="btn primary" data-act="confirmSetup">この配置で決定</button>`;
+}
+function coverTarget(){return S.coverNext==='setup1'?1:S.coverNext==='begin'?0:1-S.turn}
+function viewCover(){
+  const n=coverTarget();
+  const what=S.coverNext==='setup1'?'次は後手が駒を並べます。':S.coverNext==='begin'?'駒組み完了。先手から対局開始です。':`第${S.moveNo+1}手、${SIDE[n]}の番です。`;
+  return `<div class="screen">
+    <div class="mark">${MARK[n]}</div>
+    <h2>${SIDE[n]}の人に渡しましたか？</h2>
+    <p class="hint">${what}<br>画面を見せないように端末を渡してください。</p>
+    <button class="btn primary" data-act="yes">はい</button>
+  </div>`;
+}
+function viewTurn(){
+  const v=S.turn,o=1-v,inv=countInvaders(v);
+  const notes=[];
+  const lm=S.lastMove;
+  if(S.moveNo===0)notes.push(`<div class="note">対局開始。あなたは${MARK[v]}${SIDE[v]}です。</div>`);
+  else if(lm&&lm.by===o)notes.push(`<div class="note">${lm.to&&zoneOf(lm.to[0])==='mid'?`相手は${sq(lm.to[0],lm.to[1])}に指しました。`:'相手は見えない場所で指しました。'}</div>`);
+  for(const n of S.notices[v])notes.push(`<div class="note">${n}</div>`);
+  if(inv>0)notes.push(`<div class="note warn">⚠ 相手のコマ${inv}個に侵入された<small>どの駒か、どこにいるかはわかりません</small></div>`);
+
+  let sheet='';
+  if(S.phase==='promo'){
+    const p=S.board[S.pending.tr][S.pending.tc];
+    sheet=`<div class="sheet"><div class="in"><h3>成りますか？</h3>
+      <div class="row"><button class="btn primary" data-act="promoYes">成る（${PROM[p.t]}）</button><button class="btn" data-act="promoNo">成らない（${NAME[p.t]}）</button></div></div></div>`;
+  }else if(S.phase==='moved'){
+    sheet=`<div class="sheet"><div class="in"><h3>${S.moverMsg[0]}</h3>
+      ${S.moverMsg.length>1?`<ul>${S.moverMsg.slice(1).map(m=>`<li>${m}</li>`).join('')}</ul>`:''}
+      <button class="btn primary" data-act="endTurn">手番を終えて相手に渡す</button></div></div>`;
+  }
+  const foot=S.confirmResign
+    ?`<div class="confirm"><span>本当に投了しますか？</span><button class="btn danger" data-act="resignYes">投了する</button><button class="btn ghost" data-act="resignNo">続ける</button></div>`
+    :`<span class="hint">${S.sel?(S.targets.length?'青い印のマスに動かせます':'その駒は動かせません'):'動かす駒か持ち駒をタップ'}</span><button class="btn ghost" data-act="resign">投了</button>`;
+  return `<header class="bar"><div class="who">${MARK[v]}${SIDE[v]}の番</div><div class="no">第${S.moveNo+1}手</div></header>
+    <div class="hand opp"><span class="hl">${MARK[o]}${SIDE[o]}の持ち駒</span>${handHTML(o,false)}</div>
+    ${notes.length?`<div class="notes">${notes.join('')}</div>`:''}
+    ${boardHTML(v,S.phase==='turn'?'play':'still')}
+    <div class="hand mine"><span class="hl">あなたの持ち駒</span>${handHTML(v,S.phase==='turn')}</div>
+    ${S.phase==='turn'?`<footer class="foot">${foot}</footer>`:''}
+    ${sheet}`;
+}
+function viewOver(){
+  const w=S.winner;
+  return `<header class="bar"><div class="who">${MARK[w]}${SIDE[w]}の勝ち</div><div class="no">${S.moveNo}手</div></header>
+    <p class="hint">${S.endReason} 霧が晴れて、すべての駒が見えています（☗先手側から表示）。</p>
+    ${boardHTML(0,'reveal')}
+    <button class="btn primary" data-act="again">もう一局</button>`;
+}
+const VIEWS={title:viewTitle,setup:viewSetup,cover:viewCover,turn:viewTurn,promo:viewTurn,moved:viewTurn,over:viewOver};
+function render(){app.innerHTML=VIEWS[S.phase]();if(S.phase==='cover'||S.phase==='title')window.scrollTo(0,0)}
+
+/* ---------- input ---------- */
+function act(a){
+  switch(a){
+    case 'start':S=fresh();placeStandard(0);S.phase='setup';break;
+    case 'std':placeStandard(S.setupPlayer);S.sel=null;break;
+    case 'rand':randomize(S.setupPlayer);S.sel=null;break;
+    case 'confirmSetup':S.sel=null;S.coverNext=S.setupPlayer===0?'setup1':'begin';S.phase='cover';break;
+    case 'yes':
+      if(S.coverNext==='setup1'){S.setupPlayer=1;placeStandard(1);S.phase='setup'}
+      else if(S.coverNext==='begin'){S.turn=0;S.phase='turn'}
+      else{S.turn=1-S.turn;S.phase='turn'}
+      S.confirmResign=false;break;
+    case 'endTurn':S.coverNext='next';S.phase='cover';break;
+    case 'promoYes':S.board[S.pending.tr][S.pending.tc].p=true;S.pending.promoted=true;finishMove();return;
+    case 'promoNo':finishMove();return;
+    case 'resign':S.confirmResign=true;break;
+    case 'resignNo':S.confirmResign=false;break;
+    case 'resignYes':S.winner=1-S.turn;S.endReason=`${MARK[S.turn]}${SIDE[S.turn]}が投了しました。`;S.phase='over';break;
+    case 'again':S=fresh();break;
+  }
+  render();
+}
+function onCell(r,c){
+  if(S.phase==='setup'){
+    const v=S.setupPlayer;
+    if(zoneOf(r)!==v)return;
+    if(S.sel){
+      const {r:sr,c:sc}=S.sel;
+      [S.board[sr][sc],S.board[r][c]]=[S.board[r][c],S.board[sr][sc]];
+      S.sel=null;
+    }else if(S.board[r][c])S.sel={kind:'board',r,c};
+    render();return;
+  }
+  if(S.phase!=='turn')return;
+  const v=S.turn;
+  const t=S.targets.find(t=>t.r===r&&t.c===c);
+  if(t&&S.sel){
+    if(S.sel.kind==='board')doMove(S.sel.r,S.sel.c,t);else doDrop(S.sel.t,r,c);
+    return;
+  }
+  const p=S.board[r][c];
+  if(p&&p.o===v&&!(S.sel&&S.sel.kind==='board'&&S.sel.r===r&&S.sel.c===c)){S.sel={kind:'board',r,c};S.targets=genMoves(r,c)}
+  else{S.sel=null;S.targets=[]}
+  render();
+}
+function onHand(t){
+  if(S.phase!=='turn')return;
+  if(S.sel&&S.sel.kind==='hand'&&S.sel.t===t){S.sel=null;S.targets=[]}
+  else{S.sel={kind:'hand',t};S.targets=dropTargets(t,S.turn)}
+  render();
+}
+app.addEventListener('click',e=>{
+  const a=e.target.closest('[data-act]');if(a){act(a.dataset.act);return}
+  const h=e.target.closest('[data-hand]');if(h){onHand(h.dataset.hand);return}
+  const cell=e.target.closest('[data-r]');if(cell)onCell(+cell.dataset.r,+cell.dataset.c);
+});
+
+/* ---------- boot ---------- */
+function start(data){S=data&&data.S?data.S:fresh();render()}
+try{window.claude?.hot?.snapshot?.(()=>({S}))}catch(e){}
+window.claude?.hot?.ready?window.claude.hot.ready(start):start(window.claude?.hot?.data??{});
+</script>
+</body>
+</html>

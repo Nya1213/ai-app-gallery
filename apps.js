@@ -29,6 +29,17 @@ const APPS = [
     tags: ["ツール"],
   },
   {
+    title: "霧将棋",
+    description: "1台のスマホを2人で回して遊ぶ将棋。自陣と敵陣は霧に隠れ、見えるのは中央3段だけ。",
+    author: "Takumi",
+    platforms: ["mobile"],
+    url: "apps/kiri-shogi/index.html",
+    image: "",
+    emoji: "☗",
+    color: ["#6b4a1e", "#e3bb6c"],
+    tags: ["ゲーム"],
+  },
+  {
     title: "サンプル：カウンター",
     description: "ボタンを押すと数が増えるだけのシンプルなアプリ。追加方法の見本です。",
     author: "Takumi",
