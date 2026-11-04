@@ -42,7 +42,7 @@ const APPS = [
   {
     title: "異能力チンチロ",
     description: "CPUとサイコロ3つで勝負するチンチロ。毎ラウンド配られる26種の異能力から1つを使って逆転を狙う。",
-    author: "hrtokb17-code",
+    author: "ボンボン",
     platforms: ["pc", "mobile"],
     url: "apps/Supernatural_Chinchiro/異能力チンチロ.html",
     image: "",
